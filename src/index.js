@@ -8,11 +8,10 @@ const app = express()
 
 // Config
 const PORT = process.env.PORT || 3001
-const FRONTEND_ORIGIN = process.env.FRONTEND_ORIGIN || 'http://localhost:5173'
 
 // Middlewares
 app.use(cors({
-  origin: FRONTEND_ORIGIN,
+  origin: '*',
   credentials: true,
 }))
 app.use(express.json({ limit: '2mb' }))
@@ -41,5 +40,5 @@ app.use((err, _req, res, _next) => {
 
 app.listen(PORT, () => {
   // eslint-disable-next-line no-console
-  console.log(`Backend listening on http://localhost:${PORT} (CORS: ${FRONTEND_ORIGIN})`)
+  console.log(`Backend listening on http://localhost:${PORT}`)
 })
