@@ -43,30 +43,68 @@ export async function llmAssist({ action = 1, history = [], user }) {
   const log = baseLogger.child({ svc: 'llmAssist' })
   const started = Date.now()
   try {
-    log.info('assist:request', {
-      url,
-      action,
-      historyLen: Array.isArray(history) ? history.length : 0,
-      userRole: user?.role,
-      userContentLen: typeof user?.content === 'string' ? user.content.length : 0,
-    })
-    const resp = await axios.post(url, payload, { timeout: 120_000, validateStatus: () => true })
-    const durationMs = Date.now() - started
-    const data = resp.data
-    log.info('assist:response', {
-      status: resp.status,
-      durationMs,
-      hasDocs: Array.isArray(data?.docs),
-      docsLen: Array.isArray(data?.docs) ? data.docs.length : 0,
-      responseLen: typeof data?.response === 'string' ? data.response.length : 0,
-    })
-    if (resp.status >= 400) {
+    const timeoutMs = Number(process.env.ASSIST_TIMEOUT_MS || 120_000)
+    const headers = {
+      Accept: 'application/json',
+      'Content-Type': 'application/json; charset=utf-8',
+      'User-Agent': 'curl/7.79.1',
+    }
+    const http = await import('node:http')
+    const httpAgent = new http.Agent({ keepAlive: false })
+    const attempts = []
+
+    // attempt 1: as-is
+    attempts.push({ name: 'default', body: payload })
+    // attempt 2: action as string
+    attempts.push({ name: 'action_string', body: { action: 'assist', history, user } })
+    // attempt 2 (fallback): no history
+    attempts.push({ name: 'no_history', body: { action, history: [], user } })
+
+    let lastResp
+    for (let i = 0; i < attempts.length; i++) {
+      const attempt = attempts[i]
+      log.info('assist:request', {
+        url,
+        attempt: attempt.name,
+        action,
+        historyLen: Array.isArray(attempt.body.history) ? attempt.body.history.length : 0,
+        userRole: user?.role,
+        userContentLen: typeof user?.content === 'string' ? user.content.length : 0,
+      })
+      const resp = await axios.post(url, attempt.body, {
+        timeout: timeoutMs,
+        validateStatus: () => true,
+        headers,
+        httpAgent,
+      })
+      lastResp = resp
+      const data = resp.data
+      const durationMs = Date.now() - started
+      log.info('assist:response', {
+        status: resp.status,
+        durationMs,
+        attempt: attempt.name,
+        hasDocs: Array.isArray(data?.docs),
+        docsLen: Array.isArray(data?.docs) ? data.docs.length : 0,
+        responseLen: typeof data?.response === 'string' ? data.response.length : 0,
+      })
+      if (resp.status < 500 && resp.status < 400) {
+        return data
+      }
+      // For 5xx, backoff then retry next attempt
+      if (resp.status >= 500 && i < attempts.length - 1) {
+        await new Promise((r) => setTimeout(r, 250))
+        continue
+      }
+      // For 4xx or final failure, throw
       const snippet = typeof data === 'string' ? data.slice(0, 300) : JSON.stringify(data).slice(0, 300)
       const err = new Error(`assist http ${resp.status}: ${snippet}`)
       err.status = resp.status
       throw err
     }
-    return data
+
+    // Should not reach here
+    return lastResp?.data
   } catch (err) {
     const durationMs = Date.now() - started
     baseLogger.error('assist:error', {

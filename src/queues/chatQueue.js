@@ -10,6 +10,7 @@ export function initChatQueue({ connection, io }) {
   const chatQueueName = 'chat-jobs'
   const chatQueue = new Queue(chatQueueName, { connection })
   const chatQueueEvents = new QueueEvents(chatQueueName, { connection })
+  logger.info('queue:init', { queue: chatQueueName })
 
   const chatWorker = new Worker(
     chatQueueName,
@@ -39,7 +40,10 @@ export function initChatQueue({ connection, io }) {
         .map((m) => ({
           role: m.role === 'assistant' ? 'assistant' : 'user',
           content: m.content,
-          ...(typeof m.liked === 'boolean' ? { dislike: m.liked === false ? 1 : 0 } : {}),
+          // Upstream expects assistant entries to include 'dislike' key (0 or 1)
+          ...(m.role === 'assistant'
+            ? { dislike: typeof m.liked === 'boolean' ? (m.liked === false ? 1 : 0) : 0 }
+            : {}),
         }))
       log.info('job:history', { historyLen: history.length })
 
@@ -92,8 +96,35 @@ export function initChatQueue({ connection, io }) {
     }
   })
 
+  // Queue/Redis lifecycle events
   chatQueueEvents.on('waiting', ({ jobId }) => {
+    logger.info('queue:waiting', { queue: chatQueueName, jobId })
     io.emit('chat:waiting', { jobId })
+  })
+  chatQueueEvents.on('active', ({ jobId, prev }) => {
+    logger.info('queue:active', { queue: chatQueueName, jobId, prev })
+  })
+  chatQueueEvents.on('completed', ({ jobId, returnvalue }) => {
+    logger.info('queue:completed', {
+      queue: chatQueueName,
+      jobId,
+      returnKeys: returnvalue ? Object.keys(returnvalue) : [],
+    })
+  })
+  chatQueueEvents.on('failed', ({ jobId, failedReason }) => {
+    logger.error('queue:failed', { queue: chatQueueName, jobId, failedReason })
+  })
+  chatQueueEvents.on('stalled', ({ jobId }) => {
+    logger.warn('queue:stalled', { queue: chatQueueName, jobId })
+  })
+  chatQueueEvents.on('progress', ({ jobId, data }) => {
+    logger.info('queue:progress', { queue: chatQueueName, jobId, data })
+  })
+  chatQueueEvents.on('delayed', ({ jobId, delay }) => {
+    logger.info('queue:delayed', { queue: chatQueueName, jobId, delay })
+  })
+  chatQueueEvents.on('drained', () => {
+    logger.info('queue:drained', { queue: chatQueueName })
   })
 
   return { chatQueue, chatWorker, chatQueueEvents }
