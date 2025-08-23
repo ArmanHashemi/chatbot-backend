@@ -8,6 +8,7 @@ const messageSchema = new mongoose.Schema(
     content: { type: String, required: true },
     liked: { type: Boolean, default: null }, // null = not rated, true = like, false = dislike
     meta: { type: Object },
+    deletedAt: { type: Date, default: null, index: true },
   },
   { timestamps: true }
 )

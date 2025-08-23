@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import { authRequired } from '../middleware/auth.js'
-import { listUserConversations, listConversationMessages, setMessageFeedback } from '../services/chatStorage.js'
+import { listUserConversations, listConversationMessages, setMessageFeedback, deleteConversation } from '../services/chatStorage.js'
 import { llmSpeech, llmSimilarity } from '../services/llm.js'
 import { logger } from '../services/logger.js'
 
@@ -49,6 +49,17 @@ router.get('/conversations/:id/messages', authRequired, async (req, res, next) =
     logger.info('route:list_messages', { userId: req.user.id, conversationId: req.params.id, reqId: req.id })
     const msgs = await listConversationMessages(req.user.id, req.params.id)
     res.json({ result: msgs })
+  } catch (err) {
+    next(err)
+  }
+})
+
+// Soft delete a conversation and its messages
+router.delete('/conversations/:id', authRequired, async (req, res, next) => {
+  try {
+    logger.info('route:delete_conversation', { userId: req.user.id, conversationId: req.params.id, reqId: req.id })
+    const out = await deleteConversation(req.user.id, req.params.id)
+    res.json({ result: out })
   } catch (err) {
     next(err)
   }

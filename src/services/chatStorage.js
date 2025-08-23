@@ -75,7 +75,7 @@ export async function saveAssistantMessage({ conversationId, userId, content, me
 export async function listUserConversations(userId, { limit = 20, offset = 0 } = {}) {
   const log = logger.child({ svc: 'chatStorage' })
   log.info('db:convo:list:start', { userId, limit, offset })
-  const convos = await Conversation.find({ userId })
+  const convos = await Conversation.find({ userId, deletedAt: null })
     .sort({ updatedAt: -1 })
     .skip(offset)
     .limit(limit)
@@ -87,9 +87,9 @@ export async function listConversationMessages(userId, conversationId, { limit =
   // ensure ownership
   const log = logger.child({ svc: 'chatStorage' })
   log.info('db:messages:list:start', { userId, conversationId, limit, offset })
-  const convo = await Conversation.findOne({ _id: conversationId, userId })
+  const convo = await Conversation.findOne({ _id: conversationId, userId, deletedAt: null })
   if (!convo) throw new Error('Conversation not found')
-  const msgs = await Message.find({ conversationId })
+  const msgs = await Message.find({ conversationId, deletedAt: null })
     .sort({ createdAt: 1 })
     .skip(offset)
     .limit(limit)
@@ -106,4 +106,18 @@ export async function setMessageFeedback(userId, messageId, liked) {
   await msg.save()
   log.info('db:message:feedback:done', { id: String(msg._id), liked })
   return msg
+}
+
+export async function deleteConversation(userId, conversationId) {
+  const log = logger.child({ svc: 'chatStorage' })
+  log.info('db:convo:delete:start', { userId, conversationId })
+  const convo = await Conversation.findOne({ _id: conversationId, userId, deletedAt: null })
+  if (!convo) throw new Error('Conversation not found')
+  const now = new Date()
+  convo.deletedAt = now
+  await convo.save()
+  // Soft delete messages
+  await Message.updateMany({ conversationId, userId, deletedAt: null }, { $set: { deletedAt: now } })
+  log.info('db:convo:delete:done', { conversationId })
+  return { ok: true }
 }
