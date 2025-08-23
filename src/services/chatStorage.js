@@ -28,6 +28,22 @@ export async function saveMessage({ conversationId, userId, role, content, meta 
   })
   const doc = await Message.create({ conversationId, userId, role, content, meta })
   log.info('db:message:created', { id: String(doc._id) })
+  // Update conversation metadata
+  try {
+    const convo = await Conversation.findOne({ _id: conversationId, userId })
+    if (convo) {
+      // Set title from first user message if missing
+      if ((!convo.title || String(convo.title).trim().length === 0) && role === 'user') {
+        const raw = typeof content === 'string' ? content.trim() : ''
+        convo.title = raw.length > 0 ? (raw.length > 40 ? raw.slice(0, 40) + '…' : raw) : 'گفتگو'
+      }
+      convo.meta = { ...(convo.meta || {}), lastMessage: content }
+      await convo.save()
+      log.info('db:convo:meta_updated', { id: String(convo._id) })
+    }
+  } catch (e) {
+    log.warn('db:convo:meta_update_error', { error: e?.message })
+  }
   return doc
 }
 
@@ -42,6 +58,17 @@ export async function saveAssistantMessage({ conversationId, userId, content, me
   })
   const doc = await Message.create({ conversationId, userId, role: 'assistant', content, meta })
   log.info('db:assistant:created', { id: String(doc._id) })
+  // Update conversation last message preview
+  try {
+    const convo = await Conversation.findOne({ _id: conversationId, userId })
+    if (convo) {
+      convo.meta = { ...(convo.meta || {}), lastMessage: content }
+      await convo.save()
+      log.info('db:convo:meta_updated', { id: String(convo._id) })
+    }
+  } catch (e) {
+    log.warn('db:convo:meta_update_error', { error: e?.message })
+  }
   return doc
 }
 

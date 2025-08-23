@@ -33,6 +33,19 @@ export function initChatQueue({ connection, io }) {
         content: message,
       })
 
+      // If this conversation has no title yet, set it from the first user message
+      if (!convo.title || String(convo.title).trim().length === 0) {
+        try {
+          const raw = typeof message === 'string' ? message.trim() : ''
+          const title = raw.length > 0 ? (raw.length > 40 ? raw.slice(0, 40) + '…' : raw) : 'گفتگو'
+          convo.title = title
+          await convo.save()
+          log.info('job:convo_title_set', { conversationId: String(convo._id), title })
+        } catch (e) {
+          log.warn('job:convo_title_set_error', { error: e?.message })
+        }
+      }
+
       // Build history from previous messages in this conversation (excluding the one we just saved)
       const prevMsgs = await listConversationMessages(userId, String(convo._id))
       const history = (prevMsgs || [])
