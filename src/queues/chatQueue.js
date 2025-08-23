@@ -97,12 +97,27 @@ export function initChatQueue({ connection, io }) {
   })
 
   // Queue/Redis lifecycle events
+  async function emitQueueStats() {
+    try {
+      const [waiting, delayed, active] = await Promise.all([
+        chatQueue.getWaitingCount(),
+        chatQueue.getDelayedCount(),
+        chatQueue.getActiveCount(),
+      ])
+      io.emit('queue:stats', { waiting, delayed, active, length: waiting + delayed + active })
+    } catch (e) {
+      logger.warn('queue:stats_error', { error: e?.message })
+    }
+  }
+
   chatQueueEvents.on('waiting', ({ jobId }) => {
     logger.info('queue:waiting', { queue: chatQueueName, jobId })
     io.emit('chat:waiting', { jobId })
+    emitQueueStats()
   })
   chatQueueEvents.on('active', ({ jobId, prev }) => {
     logger.info('queue:active', { queue: chatQueueName, jobId, prev })
+    emitQueueStats()
   })
   chatQueueEvents.on('completed', ({ jobId, returnvalue }) => {
     logger.info('queue:completed', {
@@ -110,21 +125,26 @@ export function initChatQueue({ connection, io }) {
       jobId,
       returnKeys: returnvalue ? Object.keys(returnvalue) : [],
     })
+    emitQueueStats()
   })
   chatQueueEvents.on('failed', ({ jobId, failedReason }) => {
     logger.error('queue:failed', { queue: chatQueueName, jobId, failedReason })
+    emitQueueStats()
   })
   chatQueueEvents.on('stalled', ({ jobId }) => {
     logger.warn('queue:stalled', { queue: chatQueueName, jobId })
+    emitQueueStats()
   })
   chatQueueEvents.on('progress', ({ jobId, data }) => {
     logger.info('queue:progress', { queue: chatQueueName, jobId, data })
   })
   chatQueueEvents.on('delayed', ({ jobId, delay }) => {
     logger.info('queue:delayed', { queue: chatQueueName, jobId, delay })
+    emitQueueStats()
   })
   chatQueueEvents.on('drained', () => {
     logger.info('queue:drained', { queue: chatQueueName })
+    emitQueueStats()
   })
 
   return { chatQueue, chatWorker, chatQueueEvents }

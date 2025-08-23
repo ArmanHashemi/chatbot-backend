@@ -43,7 +43,8 @@ export async function llmAssist({ action = 1, history = [], user }) {
   const log = baseLogger.child({ svc: 'llmAssist' })
   const started = Date.now()
   try {
-    const timeoutMs = Number(process.env.ASSIST_TIMEOUT_MS || 120_000)
+    const parsed = Number(process.env.ASSIST_TIMEOUT_MS)
+    const timeoutMs = Number.isFinite(parsed) ? parsed : 120_000
     const headers = {
       Accept: 'application/json',
       'Content-Type': 'application/json; charset=utf-8',
@@ -55,9 +56,7 @@ export async function llmAssist({ action = 1, history = [], user }) {
 
     // attempt 1: as-is
     attempts.push({ name: 'default', body: payload })
-    // attempt 2: action as string
-    attempts.push({ name: 'action_string', body: { action: 'assist', history, user } })
-    // attempt 2 (fallback): no history
+    // attempt 2: fallback without history (some servers choke on long history)
     attempts.push({ name: 'no_history', body: { action, history: [], user } })
 
     let lastResp
@@ -72,7 +71,8 @@ export async function llmAssist({ action = 1, history = [], user }) {
         userContentLen: typeof user?.content === 'string' ? user.content.length : 0,
       })
       const resp = await axios.post(url, attempt.body, {
-        timeout: timeoutMs,
+        // axios timeout: 0 means no timeout
+        timeout: timeoutMs > 0 ? timeoutMs : 0,
         validateStatus: () => true,
         headers,
         httpAgent,
@@ -88,15 +88,15 @@ export async function llmAssist({ action = 1, history = [], user }) {
         docsLen: Array.isArray(data?.docs) ? data.docs.length : 0,
         responseLen: typeof data?.response === 'string' ? data.response.length : 0,
       })
-      if (resp.status < 500 && resp.status < 400) {
+      if (resp.status < 400) {
         return data
       }
-      // For 5xx, backoff then retry next attempt
-      if (resp.status >= 500 && i < attempts.length - 1) {
+      // For any non-success status, if we have more attempts, backoff then continue
+      if (i < attempts.length - 1) {
         await new Promise((r) => setTimeout(r, 250))
         continue
       }
-      // For 4xx or final failure, throw
+      // Final failure: throw with snippet
       const snippet = typeof data === 'string' ? data.slice(0, 300) : JSON.stringify(data).slice(0, 300)
       const err = new Error(`assist http ${resp.status}: ${snippet}`)
       err.status = resp.status

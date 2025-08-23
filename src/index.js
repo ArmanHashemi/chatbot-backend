@@ -50,11 +50,15 @@ app.use((req, res, next) => {
 
 // HTTP server + Socket.IO
 const server = http.createServer(app)
+// Disable server-level timeouts to allow long-running requests over websockets/queues
+server.requestTimeout = 0
+server.headersTimeout = 0
+// Optional: keepAlive tune
+server.keepAliveTimeout = 0
+
 const io = new SocketIOServer(server, {
   cors: { origin: '*', credentials: true },
 })
-
-registerSocketHandlers(io)
 
 // Redis connection for BullMQ
 const connection = new IORedis(REDIS_URL, {
@@ -64,6 +68,9 @@ const connection = new IORedis(REDIS_URL, {
 
 // Initialize chat queue with single concurrency worker
 const { chatQueue, chatWorker, chatQueueEvents } = initChatQueue({ connection, io })
+
+// Register socket handlers now that we have the queue instance
+registerSocketHandlers(io, { chatQueue })
 
 // Share io and queue to routes
 app.set('io', io)
