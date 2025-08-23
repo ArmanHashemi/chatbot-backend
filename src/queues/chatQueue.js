@@ -15,28 +15,36 @@ export function initChatQueue({ connection, io }) {
   const chatWorker = new Worker(
     chatQueueName,
     async (job) => {
-      const { message, conversationId, clientId, userId } = job.data || {}
+      const { message, conversationId, clientId, userId, action = 1, payload } = job.data || {}
       const log = logger.child({ jobId: job.id, userId, clientId })
       log.info('job:start', {
         conversationId,
         messageLen: typeof message === 'string' ? message.length : 0,
+        action,
       })
 
       // Ensure conversation exists
       const convo = await createOrGetConversation(userId, conversationId)
 
-      // Save user's message
+      // Determine user-visible content to save
+      const userContent = typeof message === 'string' && message.length > 0
+        ? message
+        : `[action:${Number(action)}] ${payload ? JSON.stringify(payload).slice(0, 500) : ''}`
+
+      // Save user's message (even for non-1 actions so history is complete)
       const userMsgDoc = await saveMessage({
         conversationId: convo._id,
         userId,
         role: 'user',
-        content: message,
+        content: userContent,
       })
 
       // If this conversation has no title yet, set it from the first user message
       if (!convo.title || String(convo.title).trim().length === 0) {
         try {
-          const raw = typeof message === 'string' ? message.trim() : ''
+          const raw = (typeof message === 'string' && message.trim().length > 0)
+            ? message.trim()
+            : `اکشن ${Number(action)}`
           const title = raw.length > 0 ? (raw.length > 40 ? raw.slice(0, 40) + '…' : raw) : 'گفتگو'
           convo.title = title
           await convo.save()
@@ -61,7 +69,14 @@ export function initChatQueue({ connection, io }) {
       log.info('job:history', { historyLen: history.length })
 
       // Call external LLM assist endpoint
-      const assistData = await llmAssist({ action: 1, history, user: { role: 'user', content: message } })
+      const userContentForLlm = (typeof message === 'string' && message.length > 0)
+        ? message
+        : `[action:${Number(action)}] payload=${payload ? JSON.stringify(payload) : '{}'}`
+      const assistData = await llmAssist({
+        action: Number(action) || 1,
+        history,
+        user: { role: 'user', content: userContentForLlm },
+      })
       const reply = assistData?.response || ''
       const docs = Array.isArray(assistData?.docs) ? assistData.docs : []
       log.info('job:llm_reply', { replyLen: reply.length, docsLen: docs.length })

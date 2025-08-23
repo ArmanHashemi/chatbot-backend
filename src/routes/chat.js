@@ -9,9 +9,11 @@ const router = Router()
 // Enqueue chat job; worker will emit response via WebSocket
 router.post('/chat', authRequired, async (req, res, next) => {
   try {
-    const { message, conversationId } = req.body || {}
+    const { message, conversationId, action = 1, payload } = req.body || {}
     const clientId = req.header('x-client-id') || req.body?.clientId
-    if (!message) return res.status(400).json({ error: 'message is required' })
+    if (Number(action) === 1 && !message) {
+      return res.status(400).json({ error: 'message is required for action 1' })
+    }
 
     const chatQueue = req.app.get('chatQueue')
     if (!chatQueue) return res.status(500).json({ error: 'Queue not initialized' })
@@ -21,9 +23,10 @@ router.post('/chat', authRequired, async (req, res, next) => {
       clientId,
       conversationId,
       messageLen: message?.length,
+      action,
       reqId: req.id,
     })
-    const job = await chatQueue.add('chat', { message, conversationId, clientId, userId: req.user.id })
+    const job = await chatQueue.add('chat', { message, conversationId, clientId, userId: req.user.id, action, payload })
     logger.info('route:enqueue_ok', { jobId: job.id, reqId: req.id })
     return res.status(202).json({ result: { jobId: job.id } })
   } catch (err) {
