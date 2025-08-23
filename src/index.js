@@ -10,6 +10,8 @@ import { connectDB } from './config/db.js'
 import { registerSocketHandlers } from './sockets/index.js'
 import { initChatQueue } from './queues/chatQueue.js'
 import cookieParser from 'cookie-parser'
+import crypto from 'node:crypto'
+import { logger } from './services/logger.js'
 
 const app = express()
 
@@ -25,6 +27,26 @@ app.use(cors({
 app.use(express.json({ limit: '2mb' }))
 app.use(cookieParser())
 app.use(morgan('dev'))
+
+// Request ID and structured request logging
+app.use((req, res, next) => {
+  req.id = req.headers['x-request-id'] || crypto.randomUUID()
+  const start = Date.now()
+  const child = logger.child({ reqId: req.id, method: req.method, path: req.originalUrl })
+  child.info('request:start', {
+    headers: {
+      host: req.headers.host,
+      'user-agent': req.headers['user-agent'],
+      authorization: req.headers['authorization'],
+    },
+  })
+  res.setHeader('x-request-id', req.id)
+  res.on('finish', () => {
+    const duration = Date.now() - start
+    child.info('request:finish', { status: res.statusCode, durationMs: duration })
+  })
+  next()
+})
 
 // HTTP server + Socket.IO
 const server = http.createServer(app)
@@ -65,6 +87,7 @@ app.use((req, res, next) => {
 // eslint-disable-next-line no-unused-vars
 app.use((err, _req, res, _next) => {
   const status = err.status || 500
+  logger.error('request:error', { status, error: err.message, stack: err.stack })
   res.status(status).json({ error: err.message || 'Internal Server Error' })
 })
 

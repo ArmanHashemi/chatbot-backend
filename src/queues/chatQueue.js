@@ -1,6 +1,8 @@
 import BullMQPkg from 'bullmq'
 import { createOrGetConversation, saveMessage, saveAssistantMessage } from '../services/chatStorage.js'
-import { llmText } from '../services/llm.js'
+import { llmAssist } from '../services/llm.js'
+import { listConversationMessages } from '../services/chatStorage.js'
+import { logger } from '../services/logger.js'
 
 const { Queue, Worker, QueueEvents } = BullMQPkg
 
@@ -13,6 +15,11 @@ export function initChatQueue({ connection, io }) {
     chatQueueName,
     async (job) => {
       const { message, conversationId, clientId, userId } = job.data || {}
+      const log = logger.child({ jobId: job.id, userId, clientId })
+      log.info('job:start', {
+        conversationId,
+        messageLen: typeof message === 'string' ? message.length : 0,
+      })
 
       // Ensure conversation exists
       const convo = await createOrGetConversation(userId, conversationId)
@@ -25,40 +32,60 @@ export function initChatQueue({ connection, io }) {
         content: message,
       })
 
-      // Call external LLM
-      const reply = await llmText(message)
+      // Build history from previous messages in this conversation (excluding the one we just saved)
+      const prevMsgs = await listConversationMessages(userId, String(convo._id))
+      const history = (prevMsgs || [])
+        .filter((m) => String(m._id) !== String(userMsgDoc._id))
+        .map((m) => ({
+          role: m.role === 'assistant' ? 'assistant' : 'user',
+          content: m.content,
+          ...(typeof m.liked === 'boolean' ? { dislike: m.liked === false ? 1 : 0 } : {}),
+        }))
+      log.info('job:history', { historyLen: history.length })
+
+      // Call external LLM assist endpoint
+      const assistData = await llmAssist({ action: 1, history, user: { role: 'user', content: message } })
+      const reply = assistData?.response || ''
+      const docs = Array.isArray(assistData?.docs) ? assistData.docs : []
+      log.info('job:llm_reply', { replyLen: reply.length, docsLen: docs.length })
 
       // Save assistant message
       const assistantMsgDoc = await saveAssistantMessage({
         conversationId: convo._id,
         userId,
         content: reply,
+        meta: { docs },
       })
 
       // Emit result to client via socket
       if (clientId && io.sockets.sockets.get(clientId)) {
-        io.to(clientId).emit('chat:response', {
+        const payload = {
           jobId: job.id,
           conversationId: String(convo._id),
           reply,
+          docs,
           userMessageId: String(userMsgDoc._id),
           assistantMessageId: String(assistantMsgDoc._id),
-        })
+        }
+        io.to(clientId).emit('chat:response', payload)
+        log.info('job:emit_success', { to: clientId })
       }
 
-      return {
+      const result = {
         conversationId: String(convo._id),
         reply,
+        docs,
         userMessageId: String(userMsgDoc._id),
         assistantMessageId: String(assistantMsgDoc._id),
       }
+      log.info('job:complete', { conversationId: result.conversationId })
+      return result
     },
     { connection, concurrency: 1 }
   )
 
   chatWorker.on('failed', (job, err) => {
-    // eslint-disable-next-line no-console
-    console.error('Job failed', job?.id, err?.message)
+    logger.error('job:failed', { jobId: job?.id, error: err?.message, stack: err?.stack })
     const clientId = job?.data?.clientId
     if (clientId) {
       io.to(clientId).emit('chat:error', { jobId: job?.id, error: err?.message || 'Job failed' })

@@ -2,6 +2,7 @@ import { Router } from 'express'
 import { authRequired } from '../middleware/auth.js'
 import { listUserConversations, listConversationMessages, setMessageFeedback } from '../services/chatStorage.js'
 import { llmSpeech, llmSimilarity } from '../services/llm.js'
+import { logger } from '../services/logger.js'
 
 const router = Router()
 
@@ -15,9 +16,18 @@ router.post('/chat', authRequired, async (req, res, next) => {
     const chatQueue = req.app.get('chatQueue')
     if (!chatQueue) return res.status(500).json({ error: 'Queue not initialized' })
 
+    logger.info('route:enqueue_chat', {
+      userId: req.user.id,
+      clientId,
+      conversationId,
+      messageLen: message?.length,
+      reqId: req.id,
+    })
     const job = await chatQueue.add('chat', { message, conversationId, clientId, userId: req.user.id })
+    logger.info('route:enqueue_ok', { jobId: job.id, reqId: req.id })
     return res.status(202).json({ result: { jobId: job.id } })
   } catch (err) {
+    logger.error('route:enqueue_error', { error: err.message, stack: err.stack, reqId: req.id })
     return next(err)
   }
 })
@@ -25,6 +35,7 @@ router.post('/chat', authRequired, async (req, res, next) => {
 // List conversations for current user
 router.get('/conversations', authRequired, async (req, res, next) => {
   try {
+    logger.info('route:list_conversations', { userId: req.user.id, reqId: req.id })
     const convos = await listUserConversations(req.user.id)
     res.json({ result: convos })
   } catch (err) {
@@ -35,6 +46,7 @@ router.get('/conversations', authRequired, async (req, res, next) => {
 // Conversation messages
 router.get('/conversations/:id/messages', authRequired, async (req, res, next) => {
   try {
+    logger.info('route:list_messages', { userId: req.user.id, conversationId: req.params.id, reqId: req.id })
     const msgs = await listConversationMessages(req.user.id, req.params.id)
     res.json({ result: msgs })
   } catch (err) {
