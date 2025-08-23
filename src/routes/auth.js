@@ -18,7 +18,7 @@ router.post('/register', async (req, res, next) => {
 
     const token = signToken({ id: String(user._id) })
     res.cookie('token', `Bearer ${token}`, { httpOnly: true, sameSite: 'lax' })
-    return res.json({ id: String(user._id), email: user.email, name: user.name, token })
+    return res.json({ result: { id: String(user._id), email: user.email, name: user.name, token } })
   } catch (err) {
     return next(err)
   }
@@ -37,7 +37,7 @@ router.post('/login', async (req, res, next) => {
 
     const token = signToken({ id: String(user._id) })
     res.cookie('token', `Bearer ${token}`, { httpOnly: true, sameSite: 'lax' })
-    return res.json({ id: String(user._id), email: user.email, name: user.name, token })
+    return res.json({ result: { id: String(user._id), email: user.email, name: user.name, token } })
   } catch (err) {
     return next(err)
   }
