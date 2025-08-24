@@ -58,7 +58,53 @@ router.post('/chat', authRequired, async (req, res, next) => {
       action,
       reqId: req.id,
     })
-    const job = await chatQueue.add('chat', { message, conversationId, clientId, userId: req.user.id, action, payload })
+
+    // Concurrency control: prevent multiple simultaneous jobs for same client/conversation
+    const keyClient = clientId || 'no-client'
+    const keyConv = conversationId || 'no-conv'
+    const jobsToCheck = await req.app.get('chatQueue').getJobs(['waiting', 'active', 'delayed'])
+    const sameKeyActive = jobsToCheck.find((j) =>
+      j?.data && (j.data.clientId === clientId || j.data.conversationId === conversationId)
+      && j.name === 'chat' && j.getState && true // guard
+    )
+    // If there is an active job for same client or same conversation, reject
+    if (sameKeyActive) {
+      try {
+        const state = await sameKeyActive.getState()
+        if (state === 'active') {
+          return sendFail(res, 409, 'در حال پردازش درخواست قبلی هستیم. لطفاً صبر کنید.', 'CONVERSATION_BUSY')
+        }
+      } catch {}
+    }
+    // Remove any waiting/delayed duplicates for same client/conversation
+    for (const j of jobsToCheck) {
+      try {
+        if (j?.name !== 'chat') continue
+        if (j?.data && (j.data.clientId === clientId || j.data.conversationId === conversationId)) {
+          const st = await j.getState()
+          if (st === 'waiting' || st === 'delayed') {
+            await j.remove()
+          }
+        }
+      } catch (e) {
+        console.error('Failed to remove duplicate job', e)
+      }
+    }
+
+    const TTL_MS = Number(process.env.CLIENT_JOB_TTL_MS) || 5 * 60 * 1000 // default 5 minutes
+    const now = Date.now()
+    const job = await chatQueue.add(
+      'chat',
+      { message, conversationId, clientId, userId: req.user.id, action, payload, expiresAt: now + TTL_MS },
+      {
+        removeOnComplete: true,
+        removeOnFail: 100,
+        // Timeout as a soft TTL for long-running jobs
+        timeout: 120000, // 2 minutes safety timeout
+        // Tag-like: put a jobId namespace for visibility (does not enforce uniqueness)
+        jobId: `${keyClient}:${keyConv}:${Date.now()}`,
+      }
+    )
     logger.info('route:enqueue_ok', { jobId: job.id, reqId: req.id })
     return sendAccepted(res, { jobId: job.id })
   } catch (err) {

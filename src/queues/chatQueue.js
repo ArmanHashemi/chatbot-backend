@@ -88,6 +88,37 @@ export function initChatQueue({ connection, io }) {
         sdoc = ''
       }
 
+      // If job is expired by TTL, abort early
+      const exp = Number(job?.data?.expiresAt) || 0
+      if (exp > 0 && Date.now() > exp) {
+        log.info('job:abort_expired', { jobId: job.id, expiresAt: exp })
+        const result = {
+          conversationId: String(convo._id),
+          reply: '',
+          docs: [],
+          userMessageId: String(userMsgDoc._id),
+          assistantMessageId: null,
+          aborted: true,
+          reason: 'expired',
+        }
+        return result
+      }
+
+      // If client disconnected meanwhile, abort early to save resources
+      const socketAlive = clientId && io.sockets.sockets.get(clientId)
+      if (!socketAlive) {
+        log.info('job:abort_client_disconnected', { jobId: job.id, clientId })
+        const result = {
+          conversationId: String(convo._id),
+          reply: '',
+          docs: [],
+          userMessageId: String(userMsgDoc._id),
+          assistantMessageId: null,
+          aborted: true,
+        }
+        return result
+      }
+
       // Call external LLM assist endpoint
       const userContentForLlm = (() => {
         if (act === 4 && typeof payload?.question === 'string' && payload.question.trim().length > 0) {
