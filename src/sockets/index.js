@@ -21,19 +21,27 @@ export function registerSocketHandlers(io, deps = {}) {
     }
   }
 
-  // Cancel any waiting/delayed jobs for this client
+  // Cancel any waiting/delayed/active jobs for this client
   async function cancelClientJobs(clientId) {
     if (!chatQueue || !clientId) return
     try {
-      const jobs = await chatQueue.getJobs(['waiting', 'delayed'])
+      const jobs = await chatQueue.getJobs(['waiting', 'delayed', 'active'])
       const mine = jobs.filter((j) => j?.data?.clientId === clientId)
+      let cancelledCount = 0
       for (const job of mine) {
         try {
+          const state = await job.getState()
           await job.remove()
-          logger.info('socket:cancel_job', { clientId, jobId: job.id })
+          cancelledCount++
+          logger.info('socket:cancel_job', { clientId, jobId: job.id, state })
         } catch (e) {
           logger.warn('socket:cancel_job_error', { clientId, jobId: job.id, error: e?.message })
         }
+      }
+      if (cancelledCount > 0) {
+        logger.info('socket:cancelled_jobs', { clientId, cancelledCount })
+        // Emit updated queue stats after cancellation
+        emitQueueStats()
       }
     } catch (e) {
       logger.warn('socket:cancel_jobs_error', { clientId, error: e?.message })

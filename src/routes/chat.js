@@ -63,32 +63,33 @@ router.post('/chat', authRequired, async (req, res, next) => {
     const keyClient = clientId || 'no-client'
     const keyConv = conversationId || 'no-conv'
     const jobsToCheck = await req.app.get('chatQueue').getJobs(['waiting', 'active', 'delayed'])
-    const sameKeyActive = jobsToCheck.find((j) =>
-      j?.data && (j.data.clientId === clientId || j.data.conversationId === conversationId)
-      && j.name === 'chat' && j.getState && true // guard
-    )
-    // If there is an active job for same client or same conversation, reject
-    if (sameKeyActive) {
-      try {
-        const state = await sameKeyActive.getState()
-        if (state === 'active') {
-          return sendFail(res, 409, 'در حال پردازش درخواست قبلی هستیم. لطفاً صبر کنید.', 'CONVERSATION_BUSY')
-        }
-      } catch {}
-    }
-    // Remove any waiting/delayed duplicates for same client/conversation
+    
+    // Remove any existing jobs for same client/conversation (including active ones if client reconnected)
+    let removedCount = 0
     for (const j of jobsToCheck) {
       try {
         if (j?.name !== 'chat') continue
         if (j?.data && (j.data.clientId === clientId || j.data.conversationId === conversationId)) {
           const st = await j.getState()
-          if (st === 'waiting' || st === 'delayed') {
+          // Remove waiting/delayed jobs, and active jobs if client socket is not connected
+          const shouldRemove = st === 'waiting' || st === 'delayed' || 
+            (st === 'active' && clientId && !req.app.get('io').sockets.sockets.get(clientId))
+          if (shouldRemove) {
             await j.remove()
+            removedCount++
+            logger.info('route:removed_duplicate_job', { jobId: j.id, state: st, clientId, conversationId })
+          } else if (st === 'active') {
+            // Active job with connected client - reject new request
+            return sendFail(res, 409, 'در حال پردازش درخواست قبلی هستیم. لطفاً صبر کنید.', 'CONVERSATION_BUSY')
           }
         }
       } catch (e) {
-        console.error('Failed to remove duplicate job', e)
+        logger.warn('route:remove_job_error', { jobId: j?.id, error: e?.message })
       }
+    }
+    
+    if (removedCount > 0) {
+      logger.info('route:cleaned_jobs', { clientId, conversationId, removedCount })
     }
 
     const TTL_MS = Number(process.env.CLIENT_JOB_TTL_MS) || 5 * 60 * 1000 // default 5 minutes
