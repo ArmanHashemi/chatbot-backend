@@ -1,10 +1,41 @@
 import { Router } from 'express'
+import multer from 'multer'
+import path from 'node:path'
 import { authRequired } from '../middleware/auth.js'
 import { listUserConversations, listConversationMessages, setMessageFeedback, deleteConversation } from '../services/chatStorage.js'
 import { llmSpeech, llmSimilarity } from '../services/llm.js'
 import { logger } from '../services/logger.js'
+import { extractTextFromBuffer } from '../services/extract.js'
 
 const router = Router()
+
+// Upload and extract text (no persistent storage)
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 3 * 1024 * 1024 }, // 3MB
+})
+
+const ALLOWED_MIMES = new Set([
+  'image/png', 'image/jpeg', 'image/webp', 'image/gif',
+  'application/pdf',
+  'application/vnd.openxmlformats-officedocument.wordprocessingml.document', // .docx
+  'text/plain',
+])
+
+router.post('/upload/extract-text', authRequired, upload.single('file'), async (req, res, next) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'file is required' })
+    const { originalname, mimetype, size, buffer } = req.file
+    if (size > 3 * 1024 * 1024) return res.status(413).json({ error: 'file too large (>3MB)' })
+    if (!ALLOWED_MIMES.has(mimetype)) return res.status(415).json({ error: `unsupported file type: ${mimetype}` })
+
+    const text = await extractTextFromBuffer(buffer, originalname, mimetype)
+    return res.json({ result: { text, name: originalname, size, mimetype } })
+  } catch (err) {
+    logger.error('route:extract_error', { error: err.message, stack: err.stack })
+    next(err)
+  }
+})
 
 // Enqueue chat job; worker will emit response via WebSocket
 router.post('/chat', authRequired, async (req, res, next) => {
