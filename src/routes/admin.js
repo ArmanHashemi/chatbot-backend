@@ -23,6 +23,17 @@ router.patch('/users/:id/admin', authRequired, adminRequired, async (req, res, n
   } catch (err) { next(err) }
 })
 
+// POST alias (some clients use POST from forms)
+router.post('/users/:id/admin', authRequired, adminRequired, async (req, res, next) => {
+  try {
+    const { id } = req.params
+    const { isAdmin } = req.body || {}
+    const user = await User.findByIdAndUpdate(id, { isAdmin: !!isAdmin }, { new: true }).select('-passwordHash')
+    if (!user) return res.status(404).json({ error: 'User not found' })
+    res.json({ result: user })
+  } catch (err) { next(err) }
+})
+
 // Documents CRUD
 router.get('/documents', authRequired, adminRequired, async (_req, res, next) => {
   try {

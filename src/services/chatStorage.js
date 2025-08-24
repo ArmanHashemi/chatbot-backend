@@ -1,11 +1,12 @@
 import Conversation from '../models/Conversation.js'
 import Message from '../models/Message.js'
+import mongoose from 'mongoose'
 import { logger } from './logger.js'
 
 export async function createOrGetConversation(userId, conversationId) {
   const log = logger.child({ svc: 'chatStorage' })
   log.info('db:convo:get_or_create:start', { userId, conversationId })
-  if (conversationId) {
+  if (conversationId && mongoose.isValidObjectId(conversationId)) {
     const existing = await Conversation.findOne({ _id: conversationId, userId })
     if (existing) {
       log.info('db:convo:found', { id: String(existing._id) })
@@ -87,6 +88,10 @@ export async function listConversationMessages(userId, conversationId, { limit =
   // ensure ownership
   const log = logger.child({ svc: 'chatStorage' })
   log.info('db:messages:list:start', { userId, conversationId, limit, offset })
+  if (!mongoose.isValidObjectId(conversationId)) {
+    log.warn('db:messages:list:invalid_id', { conversationId })
+    return []
+  }
   const convo = await Conversation.findOne({ _id: conversationId, userId, deletedAt: null })
   if (!convo) throw new Error('Conversation not found')
   const msgs = await Message.find({ conversationId, deletedAt: null })
@@ -100,6 +105,9 @@ export async function listConversationMessages(userId, conversationId, { limit =
 export async function setMessageFeedback(userId, messageId, liked) {
   const log = logger.child({ svc: 'chatStorage' })
   log.info('db:message:feedback:start', { userId, messageId, liked })
+  if (!mongoose.isValidObjectId(messageId)) {
+    throw new Error('Message not found')
+  }
   const msg = await Message.findOne({ _id: messageId, userId })
   if (!msg) throw new Error('Message not found')
   msg.liked = liked
@@ -111,6 +119,10 @@ export async function setMessageFeedback(userId, messageId, liked) {
 export async function deleteConversation(userId, conversationId) {
   const log = logger.child({ svc: 'chatStorage' })
   log.info('db:convo:delete:start', { userId, conversationId })
+  if (!mongoose.isValidObjectId(conversationId)) {
+    log.warn('db:convo:delete:invalid_id', { conversationId })
+    return { ok: true }
+  }
   const convo = await Conversation.findOne({ _id: conversationId, userId, deletedAt: null })
   if (!convo) throw new Error('Conversation not found')
   const now = new Date()
