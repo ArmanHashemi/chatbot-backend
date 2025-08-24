@@ -147,10 +147,15 @@ router.post('/suggest', authRequired, async (req, res, next) => {
     const topK = Number(options?.top_k) > 0 ? Number(options.top_k) : 8
     const raw = await llmSimilaritySearch(q, topK)
 
-    // Expected shape: { query, results: [ { question, answer, score, year }, ...] }
+    // Expected shape: { query, results: [ { question, answer, score, ... }, ...] }
     const results = Array.isArray(raw?.results) ? raw.results : []
     const suggestions = results
-      .map(r => (r?.question || r?.answer || '').toString().trim())
+      .map(r => {
+        const text = (r?.question || r?.answer || '').toString().trim()
+        if (!text) return null
+        const similarity = typeof r?.score === 'number' ? r.score : null
+        return { text, similarity }
+      })
       .filter(Boolean)
       .slice(0, topK)
 
