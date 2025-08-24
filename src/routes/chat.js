@@ -3,7 +3,7 @@ import multer from 'multer'
 import path from 'node:path'
 import { authRequired } from '../middleware/auth.js'
 import { listUserConversations, listConversationMessages, setMessageFeedback, deleteConversation } from '../services/chatStorage.js'
-import { llmSpeech, llmSimilarity } from '../services/llm.js'
+import { llmSpeech, llmSimilarity, llmSimilaritySearch } from '../services/llm.js'
 import { logger } from '../services/logger.js'
 import { extractTextFromBuffer } from '../services/extract.js'
 
@@ -131,6 +131,30 @@ router.post('/similarity', authRequired, async (req, res, next) => {
     if (!a || !b) return res.status(400).json({ error: 'a and b are required' })
     const result = await llmSimilarity(a, b, options)
     res.json({ result })
+  } catch (err) {
+    next(err)
+  }
+})
+
+// Suggest queries or documents based on current user input (debounced on client)
+router.post('/suggest', authRequired, async (req, res, next) => {
+  try {
+    const { q, options } = req.body || {}
+    if (!q || typeof q !== 'string' || q.trim().length === 0) {
+      return res.status(400).json({ error: 'q is required' })
+    }
+    // Prefer the external similarity search GET /search
+    const topK = Number(options?.top_k) > 0 ? Number(options.top_k) : 8
+    const raw = await llmSimilaritySearch(q, topK)
+
+    // Expected shape: { query, results: [ { question, answer, score, year }, ...] }
+    const results = Array.isArray(raw?.results) ? raw.results : []
+    const suggestions = results
+      .map(r => (r?.question || r?.answer || '').toString().trim())
+      .filter(Boolean)
+      .slice(0, topK)
+
+    return res.json({ result: suggestions })
   } catch (err) {
     next(err)
   }

@@ -9,6 +9,7 @@ const ASSIST_URL = process.env.ASSIST_URL || process.env.TEXT_URL || 'http://127
 const TEXT_GENERATE_PATH = process.env.TEXT_GENERATE_PATH || '/generate'
 const SPEECH_PATH = process.env.SPEECH_PATH || '/speech'
 const SIMILARITY_PATH = process.env.SIMILARITY_PATH || '/similarity'
+const SIMILARITY_SEARCH_PATH = process.env.SIMILARITY_SEARCH_PATH || '/search'
 const ASSIST_PATH = process.env.ASSIST_PATH || '/assist'
 
 export async function llmText(prompt, options = {}) {
@@ -34,6 +35,18 @@ export async function llmSimilarity(a, b, options = {}) {
   const payload = { a, b, ...options }
   const { data } = await axios.post(url, payload, { timeout: 30_000 })
   return data // depends on service shape
+}
+
+// Similarity search (suggestions or semantic search)
+export async function llmSimilaritySearch(query, top_k = 8, options = {}) {
+  const url = new URL(SIMILARITY_SEARCH_PATH, SIMILARITY_URL).toString()
+  const { data } = await axios.get(url, {
+    params: { query, top_k },
+    headers: { Accept: 'application/json' },
+    timeout: 30_000,
+    ...options,
+  })
+  return data // expected shape: { query, results: [...], time_ms, breakdown }
 }
 
 // Post to external assist endpoint with the exact expected schema
