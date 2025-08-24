@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import User from '../models/User.js'
-import { signToken } from '../middleware/auth.js'
+import { signToken, authRequired } from '../middleware/auth.js'
 
 const router = Router()
 
@@ -44,3 +44,14 @@ router.post('/login', async (req, res, next) => {
 })
 
 export default router
+
+// GET /api/auth/me
+router.get('/me', authRequired, async (req, res, next) => {
+  try {
+    const user = await User.findById(req.user.id).select('-passwordHash')
+    if (!user) return res.status(404).json({ error: 'User not found' })
+    return res.json({ result: { id: String(user._id), email: user.email, name: user.name, isAdmin: !!user.isAdmin } })
+  } catch (err) {
+    return next(err)
+  }
+})
