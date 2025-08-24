@@ -50,9 +50,9 @@ export async function llmSimilaritySearch(query, top_k = 8, options = {}) {
 }
 
 // Post to external assist endpoint with the exact expected schema
-export async function llmAssist({ action = 1, history = [], user }) {
+export async function llmAssist({ action = 1, history = [], user, fdoc = '', sdoc = '' }) {
   const url = new URL(ASSIST_PATH, ASSIST_URL).toString()
-  const payload = { action, history, user }
+  const payload = { action, history, user, fdoc, sdoc }
   const log = baseLogger.child({ svc: 'llmAssist' })
   const started = Date.now()
   try {
@@ -70,7 +70,7 @@ export async function llmAssist({ action = 1, history = [], user }) {
     // attempt 1: as-is
     attempts.push({ name: 'default', body: payload })
     // attempt 2: fallback without history (some servers choke on long history)
-    attempts.push({ name: 'no_history', body: { action, history: [], user } })
+    attempts.push({ name: 'no_history', body: { action, history: [], user, fdoc, sdoc } })
 
     let lastResp
     for (let i = 0; i < attempts.length; i++) {
@@ -82,6 +82,8 @@ export async function llmAssist({ action = 1, history = [], user }) {
         historyLen: Array.isArray(attempt.body.history) ? attempt.body.history.length : 0,
         userRole: user?.role,
         userContentLen: typeof user?.content === 'string' ? user.content.length : 0,
+        fdocLen: typeof payload.fdoc === 'string' ? payload.fdoc.length : 0,
+        sdocLen: typeof payload.sdoc === 'string' ? payload.sdoc.length : 0,
       })
       const resp = await axios.post(url, attempt.body, {
         // axios timeout: 0 means no timeout

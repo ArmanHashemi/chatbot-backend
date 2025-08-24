@@ -68,14 +68,41 @@ export function initChatQueue({ connection, io }) {
         }))
       log.info('job:history', { historyLen: history.length })
 
+      // Prepare fdoc/sdoc based on action and payload
+      let fdoc = ''
+      let sdoc = ''
+      const act = Number(action) || 1
+      if (act === 3) {
+        // Contradiction: may have two inputs
+        if (payload && payload.scope === 'pair') {
+          fdoc = payload?.a?.text || ''
+          sdoc = payload?.b?.text || ''
+        } else {
+          // rag or single input
+          fdoc = payload?.a?.text || ''
+          sdoc = ''
+        }
+      } else if (act === 4) {
+        // DocQA: one document + a question
+        fdoc = payload?.doc?.text || ''
+        sdoc = ''
+      }
+
       // Call external LLM assist endpoint
-      const userContentForLlm = (typeof message === 'string' && message.length > 0)
-        ? message
-        : `[action:${Number(action)}] payload=${payload ? JSON.stringify(payload) : '{}'}`
+      const userContentForLlm = (() => {
+        if (act === 4 && typeof payload?.question === 'string' && payload.question.trim().length > 0) {
+          return payload.question.trim()
+        }
+        if (typeof message === 'string' && message.length > 0) return message
+        return `[action:${act}] payload=${payload ? JSON.stringify(payload) : '{}'}`
+      })()
+
       const assistData = await llmAssist({
-        action: Number(action) || 1,
+        action: act,
         history,
         user: { role: 'user', content: userContentForLlm },
+        fdoc,
+        sdoc,
       })
       const reply = assistData?.response || ''
       const docs = Array.isArray(assistData?.docs) ? assistData.docs : []
