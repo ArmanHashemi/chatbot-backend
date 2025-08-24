@@ -12,6 +12,7 @@ import { initChatQueue } from './queues/chatQueue.js'
 import cookieParser from 'cookie-parser'
 import crypto from 'node:crypto'
 import { logger } from './services/logger.js'
+import User from './models/User.js'
 
 const app = express()
 
@@ -100,7 +101,8 @@ app.use((err, _req, res, _next) => {
 
 // Start after DB connection
 connectDB()
-  .then(() => {
+  .then(async () => {
+    await ensureDefaultAdmin()
     server.listen(PORT, () => {
       // eslint-disable-next-line no-console
       console.log(`Backend listening on http://localhost:${PORT}`)
@@ -111,4 +113,23 @@ connectDB()
     console.error('Failed to connect to MongoDB:', err)
     process.exit(1)
   })
+
+async function ensureDefaultAdmin() {
+  try {
+    const email = process.env.ADMIN_EMAIL || 'admin@example.com'
+    const password = process.env.ADMIN_PASSWORD || 'admin1234'
+    let user = await User.findOne({ email })
+    if (!user) {
+      const passwordHash = await User.hashPassword(password)
+      user = await User.create({ email, name: 'Admin', passwordHash, isAdmin: true })
+      logger.info('admin:seeded', { email })
+    } else if (!user.isAdmin) {
+      user.isAdmin = true
+      await user.save()
+      logger.info('admin:granted', { email })
+    }
+  } catch (e) {
+    logger.error('admin:seed_error', { error: e.message })
+  }
+}
 

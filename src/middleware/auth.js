@@ -19,9 +19,16 @@ export async function authRequired(req, res, next) {
     const user = await User.findById(decoded.id)
     if (!user) return res.status(401).json({ error: 'Unauthorized' })
 
-    req.user = { id: String(user._id), email: user.email, name: user.name }
+    req.user = { id: String(user._id), email: user.email, name: user.name, isAdmin: !!user.isAdmin }
     next()
   } catch (err) {
     return res.status(401).json({ error: 'Unauthorized' })
   }
+}
+
+export function adminRequired(req, res, next) {
+  if (!req.user || !req.user.isAdmin) {
+    return res.status(403).json({ error: 'Forbidden' })
+  }
+  next()
 }
