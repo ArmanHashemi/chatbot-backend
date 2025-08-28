@@ -12,6 +12,33 @@ const SIMILARITY_PATH = process.env.SIMILARITY_PATH || '/similarity'
 const SIMILARITY_SEARCH_PATH = process.env.SIMILARITY_SEARCH_PATH || '/search'
 const ASSIST_PATH = process.env.ASSIST_PATH || '/assist'
 
+// Pretty-print all outgoing axios requests (method, URL, params, body)
+// This affects the default axios instance imported across backend files
+try {
+  const log = baseLogger.child({ svc: 'axios' })
+  axios.interceptors.request.use((config) => {
+    const pretty = (obj) => {
+      try {
+        return JSON.stringify(obj, null, 2)
+      } catch (_) {
+        return String(obj)
+      }
+    }
+    log.info('axios:request', {
+      method: (config.method || 'get').toUpperCase(),
+      url: config.url,
+      params: config.params ? pretty(config.params) : undefined,
+      data: config.data ? (typeof config.data === 'string' ? config.data : pretty(config.data)) : undefined,
+    })
+    return config
+  })
+} catch (e) {
+  // Fallback to console if logger is not available for any reason
+  // but avoid crashing the app
+  // eslint-disable-next-line no-console
+  console.warn('[axios] failed to install request interceptor', e?.message)
+}
+
 export async function llmText(prompt, options = {}) {
   // Fallback: send { prompt } and try to read common fields
   const url = new URL(TEXT_GENERATE_PATH, TEXT_URL).toString()
