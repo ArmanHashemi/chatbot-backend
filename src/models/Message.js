@@ -8,6 +8,8 @@ const messageSchema = new mongoose.Schema(
     content: { type: String, required: true },
     liked: { type: Boolean, default: null }, // null = not rated, true = like, false = dislike
     meta: { type: Object },
+    sentiment: { type: String, enum: ['positive', 'neutral', 'negative', null], default: null, index: true },
+    sentimentScore: { type: Number, default: null },
     deletedAt: { type: Date, default: null, index: true },
   },
   { timestamps: true }

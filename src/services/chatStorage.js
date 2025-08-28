@@ -2,6 +2,7 @@ import Conversation from '../models/Conversation.js'
 import Message from '../models/Message.js'
 import mongoose from 'mongoose'
 import { logger } from './logger.js'
+import { analyzeSentiment } from './sentiment.js'
 
 export async function createOrGetConversation(userId, conversationId) {
   const log = logger.child({ svc: 'chatStorage' })
@@ -27,7 +28,16 @@ export async function saveMessage({ conversationId, userId, role, content, meta 
     contentLen: typeof content === 'string' ? content.length : 0,
     hasMeta: !!meta,
   })
-  const doc = await Message.create({ conversationId, userId, role, content, meta })
+  let sentiment = null
+  let sentimentScore = null
+  if (role === 'user') {
+    try {
+      const res = analyzeSentiment(content)
+      sentiment = res.label
+      sentimentScore = res.score
+    } catch {}
+  }
+  const doc = await Message.create({ conversationId, userId, role, content, meta, sentiment, sentimentScore })
   log.info('db:message:created', { id: String(doc._id) })
   // Update conversation metadata
   try {
