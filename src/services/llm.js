@@ -24,12 +24,25 @@ try {
         return String(obj)
       }
     }
-    log.info('axios:request', {
+    const dataObj = typeof config.data === 'string' ? (() => { try { return JSON.parse(config.data) } catch { return null } })() : config.data
+    const fdoc = dataObj && typeof dataObj.fdoc === 'string' ? dataObj.fdoc : null
+    const sdoc = dataObj && typeof dataObj.sdoc === 'string' ? dataObj.sdoc : null
+    const query = dataObj && typeof dataObj.query === 'string' ? dataObj.query : null
+    const logObj = {
       method: (config.method || 'get').toUpperCase(),
       url: config.url,
       params: config.params ? pretty(config.params) : undefined,
-      data: config.data ? (typeof config.data === 'string' ? config.data : pretty(config.data)) : undefined,
-    })
+      dataKeys: dataObj && typeof dataObj === 'object' ? Object.keys(dataObj) : undefined,
+      fdocLen: fdoc ? fdoc.length : undefined,
+      sdocLen: sdoc ? sdoc.length : undefined,
+      queryLen: query ? query.length : undefined,
+      fdocPreview: fdoc ? fdoc.slice(0, 200) : undefined,
+      sdocPreview: sdoc ? sdoc.slice(0, 200) : undefined,
+      queryPreview: query ? query.slice(0, 200) : undefined,
+      // Also include the full data pretty-printed for smaller payloads
+      data: config.data && (typeof config.data === 'string' ? config.data : pretty(config.data)),
+    }
+    log.info('axios:request', logObj)
     return config
   })
 } catch (e) {
