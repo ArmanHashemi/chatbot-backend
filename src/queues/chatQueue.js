@@ -15,12 +15,13 @@ export function initChatQueue({ connection, io }) {
   const chatWorker = new Worker(
     chatQueueName,
     async (job) => {
-      const { message, conversationId, clientId, userId, action = 1, payload } = job.data || {}
-      const log = logger.child({ jobId: job.id, userId, clientId })
+      const { message, conversationId, clientId, userId, action = 1, payload, think = 0 } = job.data || {}
+      const log = logger.child({ jobId: job.id, userId, clientId, think: Number(think) === 1 ? 1 : 0 })
       log.info('job:start', {
         conversationId,
         messageLen: typeof message === 'string' ? message.length : 0,
         action,
+        think: Number(think) === 1 ? 1 : 0,
       })
 
       // Ensure conversation exists
@@ -142,6 +143,7 @@ export function initChatQueue({ connection, io }) {
         fdoc,
         sdoc,
         query,
+        think: Number(think) === 1 ? 1 : 0,
       })
       const reply = assistData?.response || ''
       const docs = Array.isArray(assistData?.docs) ? assistData.docs : []

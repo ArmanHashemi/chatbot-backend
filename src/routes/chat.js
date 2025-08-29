@@ -41,7 +41,7 @@ router.post('/upload/extract-text', authRequired, upload.single('file'), async (
 // Enqueue chat job; worker will emit response via WebSocket
 router.post('/chat', authRequired, async (req, res, next) => {
   try {
-    const { message, conversationId, action = 1, payload } = req.body || {}
+    const { message, conversationId, action = 1, payload, think = 0 } = req.body || {}
     const clientId = req.header('x-client-id') || req.body?.clientId
     if (Number(action) === 1 && !message) {
       return sendFail(res, 400, 'message is required for action 1', 'MESSAGE_REQUIRED')
@@ -56,6 +56,7 @@ router.post('/chat', authRequired, async (req, res, next) => {
       conversationId,
       messageLen: message?.length,
       action,
+      think: Number(think) === 1 ? 1 : 0,
       reqId: req.id,
     })
 
@@ -96,7 +97,7 @@ router.post('/chat', authRequired, async (req, res, next) => {
     const now = Date.now()
     const job = await chatQueue.add(
       'chat',
-      { message, conversationId, clientId, userId: req.user.id, action, payload, expiresAt: now + TTL_MS },
+      { message, conversationId, clientId, userId: req.user.id, action, payload, think: Number(think) === 1 ? 1 : 0, expiresAt: now + TTL_MS },
       {
         removeOnComplete: true,
         removeOnFail: 100,
