@@ -71,8 +71,14 @@ export function initChatQueue({ connection, io }) {
       // Prepare fdoc/sdoc based on action and payload
       let fdoc = ''
       let sdoc = ''
+      let query = ''
       const act = Number(action) || 1
-      if (act === 3) {
+      if (act === 2) {
+        // Summary: single input (text extracted or typed)
+        // SummaryDialog payload shape: { type: 'text', text, name? }
+        fdoc = payload?.text || ''
+        sdoc = ''
+      } else if (act === 3) {
         // Contradiction: may have two inputs
         if (payload && payload.scope === 'pair') {
           fdoc = payload?.a?.text || ''
@@ -86,6 +92,7 @@ export function initChatQueue({ connection, io }) {
         // DocQA: one document + a question
         fdoc = payload?.doc?.text || ''
         sdoc = ''
+        query = (typeof payload?.question === 'string' ? payload.question.trim() : '')
       }
 
       // If job is expired by TTL, abort early
@@ -134,6 +141,7 @@ export function initChatQueue({ connection, io }) {
         user: { role: 'user', content: userContentForLlm },
         fdoc,
         sdoc,
+        query,
       })
       const reply = assistData?.response || ''
       const docs = Array.isArray(assistData?.docs) ? assistData.docs : []
@@ -196,9 +204,28 @@ export function initChatQueue({ connection, io }) {
     }
   }
 
-  chatQueueEvents.on('waiting', ({ jobId }) => {
+  chatQueueEvents.on('waiting', async ({ jobId }) => {
     logger.info('queue:waiting', { queue: chatQueueName, jobId })
-    io.emit('chat:waiting', { jobId })
+    try {
+      const job = await chatQueue.getJob(jobId)
+      const clientId = job?.data?.clientId
+      // Compute position among waiting jobs (1-based)
+      const waitingJobs = await chatQueue.getJobs(['waiting'])
+      const idx = waitingJobs.findIndex((j) => String(j?.id) === String(jobId))
+      const position = idx >= 0 ? idx + 1 : null
+      // Compute totals
+      const [waiting, delayed, active] = await Promise.all([
+        chatQueue.getWaitingCount(),
+        chatQueue.getDelayedCount(),
+        chatQueue.getActiveCount(),
+      ])
+      const length = waiting + delayed + active
+      if (clientId) {
+        io.to(clientId).emit('chat:waiting', { jobId, position, length })
+      }
+    } catch (e) {
+      logger.warn('queue:waiting_emit_error', { jobId, error: e?.message })
+    }
     emitQueueStats()
   })
   chatQueueEvents.on('active', ({ jobId, prev }) => {

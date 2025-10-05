@@ -12,6 +12,46 @@ const SIMILARITY_PATH = process.env.SIMILARITY_PATH || '/similarity'
 const SIMILARITY_SEARCH_PATH = process.env.SIMILARITY_SEARCH_PATH || '/search'
 const ASSIST_PATH = process.env.ASSIST_PATH || '/assist'
 
+// Pretty-print all outgoing axios requests (method, URL, params, body)
+// This affects the default axios instance imported across backend files
+try {
+  const log = baseLogger.child({ svc: 'axios' })
+  axios.interceptors.request.use((config) => {
+    const pretty = (obj) => {
+      try {
+        return JSON.stringify(obj, null, 2)
+      } catch (_) {
+        return String(obj)
+      }
+    }
+    const dataObj = typeof config.data === 'string' ? (() => { try { return JSON.parse(config.data) } catch { return null } })() : config.data
+    const fdoc = dataObj && typeof dataObj.fdoc === 'string' ? dataObj.fdoc : null
+    const sdoc = dataObj && typeof dataObj.sdoc === 'string' ? dataObj.sdoc : null
+    const query = dataObj && typeof dataObj.query === 'string' ? dataObj.query : null
+    const logObj = {
+      method: (config.method || 'get').toUpperCase(),
+      url: config.url,
+      params: config.params ? pretty(config.params) : undefined,
+      dataKeys: dataObj && typeof dataObj === 'object' ? Object.keys(dataObj) : undefined,
+      fdocLen: fdoc ? fdoc.length : undefined,
+      sdocLen: sdoc ? sdoc.length : undefined,
+      queryLen: query ? query.length : undefined,
+      fdocPreview: fdoc ? fdoc.slice(0, 200) : undefined,
+      sdocPreview: sdoc ? sdoc.slice(0, 200) : undefined,
+      queryPreview: query ? query.slice(0, 200) : undefined,
+      // Also include the full data pretty-printed for smaller payloads
+      data: config.data && (typeof config.data === 'string' ? config.data : pretty(config.data)),
+    }
+    log.info('axios:request', logObj)
+    return config
+  })
+} catch (e) {
+  // Fallback to console if logger is not available for any reason
+  // but avoid crashing the app
+  // eslint-disable-next-line no-console
+  console.warn('[axios] failed to install request interceptor', e?.message)
+}
+
 export async function llmText(prompt, options = {}) {
   // Fallback: send { prompt } and try to read common fields
   const url = new URL(TEXT_GENERATE_PATH, TEXT_URL).toString()
@@ -50,9 +90,9 @@ export async function llmSimilaritySearch(query, top_k = 8, options = {}) {
 }
 
 // Post to external assist endpoint with the exact expected schema
-export async function llmAssist({ action = 1, history = [], user, fdoc = '', sdoc = '' }) {
+export async function llmAssist({ action = 1, history = [], user, fdoc = '', sdoc = '', query = '' }) {
   const url = new URL(ASSIST_PATH, ASSIST_URL).toString()
-  const payload = { action, history, user, fdoc, sdoc }
+  const payload = { action, history, user, fdoc, sdoc, query }
   const log = baseLogger.child({ svc: 'llmAssist' })
   const started = Date.now()
   try {
@@ -70,7 +110,7 @@ export async function llmAssist({ action = 1, history = [], user, fdoc = '', sdo
     // attempt 1: as-is
     attempts.push({ name: 'default', body: payload })
     // attempt 2: fallback without history (some servers choke on long history)
-    attempts.push({ name: 'no_history', body: { action, history: [], user, fdoc, sdoc } })
+    attempts.push({ name: 'no_history', body: { action, history: [], user, fdoc, sdoc, query } })
 
     let lastResp
     for (let i = 0; i < attempts.length; i++) {
@@ -82,8 +122,9 @@ export async function llmAssist({ action = 1, history = [], user, fdoc = '', sdo
         historyLen: Array.isArray(attempt.body.history) ? attempt.body.history.length : 0,
         userRole: user?.role,
         userContentLen: typeof user?.content === 'string' ? user.content.length : 0,
-        fdocLen: typeof payload.fdoc === 'string' ? payload.fdoc.length : 0,
-        sdocLen: typeof payload.sdoc === 'string' ? payload.sdoc.length : 0,
+        fdocLen: typeof attempt.body.fdoc === 'string' ? attempt.body.fdoc.length : 0,
+        sdocLen: typeof attempt.body.sdoc === 'string' ? attempt.body.sdoc.length : 0,
+        queryLen: typeof attempt.body.query === 'string' ? attempt.body.query.length : 0,
       })
       const resp = await axios.post(url, attempt.body, {
         // axios timeout: 0 means no timeout
