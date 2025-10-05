@@ -11,13 +11,14 @@ const logger = baseLogger.child({ route: 'dify' })
  * Dify-compatible chat endpoint
  */
 router.post('/v1/chat-messages', authenticateDifyAPI, async (req, res) => {
-  const log = logger.child({ 
+  const log = baseLogger.child({ 
+    route: 'dify',
     endpoint: 'chat-messages',
     userId: req.difyUser ? String(req.difyUser._id) : 'unknown'
   })
 
   try {
-    const { query, inputs = {}, user, conversation_id, response_mode = 'blocking' } = req.body
+    const { query, inputs, user, conversation_id, response_mode = 'blocking' } = req.body
 
     // Validate required fields
     if (!query) {
@@ -29,7 +30,7 @@ router.post('/v1/chat-messages', authenticateDifyAPI, async (req, res) => {
       })
     }
 
-    if (inputs === null || inputs === undefined) {
+    if (!('inputs' in req.body)) {
       log.warn('request:missing_inputs')
       return res.status(400).json({
         status: 400,
@@ -132,7 +133,8 @@ router.post('/v1/chat-messages', authenticateDifyAPI, async (req, res) => {
  * Get conversation messages (optional endpoint for testing)
  */
 router.get('/v1/conversations/:id/messages', authenticateDifyAPI, async (req, res) => {
-  const log = logger.child({ 
+  const log = baseLogger.child({ 
+    route: 'dify',
     endpoint: 'get-messages',
     conversationId: req.params.id
   })

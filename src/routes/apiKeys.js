@@ -1,6 +1,6 @@
 import { Router } from 'express'
 import ApiKey from '../models/ApiKey.js'
-import { authenticateToken } from '../middleware/auth.js'
+import { authRequired } from '../middleware/auth.js'
 import { logger as baseLogger } from '../services/logger.js'
 
 const router = Router()
@@ -10,13 +10,13 @@ const logger = baseLogger.child({ route: 'apiKeys' })
  * GET /api/keys
  * Get all API keys for the authenticated user
  */
-router.get('/', authenticateToken, async (req, res) => {
+router.get('/', authRequired, async (req, res) => {
   try {
     const keys = await ApiKey.find({ 
-      userId: req.user.userId 
+      userId: req.user.id 
     }).select('-key') // Don't return the actual key in list
     
-    logger.info('keys:list', { userId: req.user.userId, count: keys.length })
+    logger.info('keys:list', { userId: req.user.id, count: keys.length })
     res.json({ keys })
   } catch (error) {
     logger.error('keys:list:error', { error: error.message })
@@ -28,7 +28,7 @@ router.get('/', authenticateToken, async (req, res) => {
  * POST /api/keys
  * Create a new API key
  */
-router.post('/', authenticateToken, async (req, res) => {
+router.post('/', authRequired, async (req, res) => {
   try {
     const { name = 'Default API Key', expiresIn = null } = req.body
     
@@ -44,14 +44,14 @@ router.post('/', authenticateToken, async (req, res) => {
     
     // Create key document
     const keyDoc = await ApiKey.create({
-      userId: req.user.userId,
+      userId: req.user.id,
       key: apiKey,
       name,
       expiresAt
     })
     
     logger.info('keys:create', { 
-      userId: req.user.userId, 
+      userId: req.user.id, 
       keyId: keyDoc._id,
       name,
       expiresAt 
@@ -76,11 +76,11 @@ router.post('/', authenticateToken, async (req, res) => {
  * DELETE /api/keys/:id
  * Delete/revoke an API key
  */
-router.delete('/:id', authenticateToken, async (req, res) => {
+router.delete('/:id', authRequired, async (req, res) => {
   try {
     const result = await ApiKey.deleteOne({
       _id: req.params.id,
-      userId: req.user.userId
+      userId: req.user.id
     })
     
     if (result.deletedCount === 0) {
@@ -88,7 +88,7 @@ router.delete('/:id', authenticateToken, async (req, res) => {
     }
     
     logger.info('keys:delete', { 
-      userId: req.user.userId, 
+      userId: req.user.id, 
       keyId: req.params.id 
     })
     
@@ -103,11 +103,11 @@ router.delete('/:id', authenticateToken, async (req, res) => {
  * PATCH /api/keys/:id/toggle
  * Toggle API key active status
  */
-router.patch('/:id/toggle', authenticateToken, async (req, res) => {
+router.patch('/:id/toggle', authRequired, async (req, res) => {
   try {
     const key = await ApiKey.findOne({
       _id: req.params.id,
-      userId: req.user.userId
+      userId: req.user.id
     })
     
     if (!key) {
@@ -118,7 +118,7 @@ router.patch('/:id/toggle', authenticateToken, async (req, res) => {
     await key.save()
     
     logger.info('keys:toggle', { 
-      userId: req.user.userId, 
+      userId: req.user.id, 
       keyId: req.params.id,
       isActive: key.isActive 
     })

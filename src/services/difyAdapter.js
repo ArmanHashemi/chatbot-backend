@@ -107,7 +107,7 @@ export function transformToDifyResponse(internalResponse, responseMode = 'blocki
  * Handle Dify chat request in blocking mode
  */
 export async function handleDifyBlockingRequest(user, payload) {
-  const log = logger.child({ mode: 'blocking', userId: String(user._id) })
+  const log = baseLogger.child({ service: 'difyAdapter', mode: 'blocking', userId: String(user._id) })
   
   try {
     const { query, inputs = {}, conversation_id, response_mode } = payload
@@ -214,7 +214,7 @@ export async function handleDifyBlockingRequest(user, payload) {
  * Handle Dify chat request in streaming mode
  */
 export async function* handleDifyStreamingRequest(user, payload) {
-  const log = logger.child({ mode: 'streaming', userId: String(user._id) })
+  const log = baseLogger.child({ service: 'difyAdapter', mode: 'streaming', userId: String(user._id) })
   
   try {
     const { query, inputs = {}, conversation_id } = payload
