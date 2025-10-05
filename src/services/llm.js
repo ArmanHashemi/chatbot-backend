@@ -1,16 +1,19 @@
 import axios from 'axios'
 import { logger as baseLogger } from './logger.js'
+import crypto from 'crypto'
 
 const TEXT_URL = process.env.TEXT_URL || 'http://127.0.0.1:7860/'
 const SPEECH_URL = process.env.SPEECH_URL || 'http://127.0.0.1:7863/'
 const SIMILARITY_URL = process.env.SIMILARITY_URL || 'http://127.0.0.1:7863/'
 const ASSIST_URL = process.env.ASSIST_URL || process.env.TEXT_URL || 'http://127.0.0.1:7860/'
+const STREAM_URL = process.env.STREAM_URL || 'http://78.39.10.7:7861/'
 
 const TEXT_GENERATE_PATH = process.env.TEXT_GENERATE_PATH || '/generate'
 const SPEECH_PATH = process.env.SPEECH_PATH || '/speech'
 const SIMILARITY_PATH = process.env.SIMILARITY_PATH || '/similarity'
 const SIMILARITY_SEARCH_PATH = process.env.SIMILARITY_SEARCH_PATH || '/search'
 const ASSIST_PATH = process.env.ASSIST_PATH || '/assist'
+const STREAM_CHAT_PATH = process.env.STREAM_CHAT_PATH || '/stream_chat'
 
 // Pretty-print all outgoing axios requests (method, URL, params, body)
 // This affects the default axios instance imported across backend files
@@ -174,5 +177,97 @@ export async function llmAssist({ action = 1, history = [], user, fdoc = '', sdo
         : JSON.stringify(err?.response?.data || '').slice(0, 500),
     })
     throw err
+  }
+}
+
+// Streaming assist endpoint
+export async function* llmStreamAssist({ action = 1, history = [], user, fdoc = '', sdoc = '', query = '', think = 0, request_id = null }) {
+  const url = new URL(STREAM_CHAT_PATH, STREAM_URL).toString()
+  const payload = { 
+    action, 
+    history, 
+    user, 
+    fdoc, 
+    sdoc, 
+    query,
+    think,
+    request_id: request_id || crypto.randomUUID()
+  }
+  const log = baseLogger.child({ svc: 'llmStreamAssist' })
+  
+  log.info('stream:request', {
+    url,
+    action,
+    historyLen: history.length,
+    userRole: user?.role,
+    think
+  })
+
+  try {
+    const response = await fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Accept': 'text/event-stream'
+      },
+      body: JSON.stringify(payload)
+    })
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}: ${response.statusText}`)
+    }
+
+    const reader = response.body.getReader()
+    const decoder = new TextDecoder()
+    let buffer = ''
+    let fullText = ''
+    let totalTokens = 0
+
+    while (true) {
+      const { done, value } = await reader.read()
+      
+      if (done) break
+      
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() || ''
+
+      for (const line of lines) {
+        if (!line.trim()) continue
+        if (!line.startsWith('data: ')) continue
+
+        const dataStr = line.slice(6).trim()
+        if (!dataStr) continue
+
+        try {
+          const data = JSON.parse(dataStr)
+          
+          if (data.finished) {
+            // Final event with total tokens
+            totalTokens = data.total_tokens || totalTokens
+            yield {
+              type: 'finished',
+              text: fullText,
+              totalTokens
+            }
+          } else if (data.text) {
+            // Text chunk
+            fullText += data.text
+            totalTokens = data.token_count || totalTokens
+            yield {
+              type: 'chunk',
+              text: data.text,
+              fullText,
+              tokenCount: data.token_count
+            }
+          }
+        } catch (e) {
+          log.warn('stream:parse_error', { line: dataStr, error: e.message })
+        }
+      }
+    }
+  } catch (error) {
+    log.error('stream:error', { error: error.message })
+    throw error
   }
 }

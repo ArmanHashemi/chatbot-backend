@@ -3,6 +3,7 @@ import express from 'express'
 import cors from 'cors'
 import morgan from 'morgan'
 import routes from './routes/index.js'
+import difyRoutes from './routes/dify.js'
 import http from 'node:http'
 import { Server as SocketIOServer } from 'socket.io'
 import IORedis from 'ioredis'
@@ -13,6 +14,7 @@ import cookieParser from 'cookie-parser'
 import crypto from 'node:crypto'
 import { logger } from './services/logger.js'
 import User from './models/User.js'
+import ApiKey from './models/ApiKey.js'
 
 const app = express()
 
@@ -80,6 +82,9 @@ app.set('chatQueue', chatQueue)
 // Routes
 app.use('/api', routes)
 
+// Dify API routes (mounted at root for /v1/chat-messages)
+app.use('/', difyRoutes)
+
 // Health root
 app.get('/', (_req, res) => {
   res.json({ status: 'ok', service: 'chatbot-backend', time: new Date().toISOString() })
@@ -127,6 +132,20 @@ async function ensureDefaultAdmin() {
       user.isAdmin = true
       await user.save()
       logger.info('admin:granted', { email })
+    }
+    
+    // Create default API key for test user if configured
+    if (process.env.DIFY_TEST_USER_ID && process.env.DIFY_TEST_API_KEY) {
+      const testApiKey = await ApiKey.findOne({ key: process.env.DIFY_TEST_API_KEY })
+      if (!testApiKey) {
+        await ApiKey.create({
+          userId: user._id,
+          key: process.env.DIFY_TEST_API_KEY,
+          name: 'Test API Key',
+          isActive: true
+        })
+        logger.info('test:api_key_created', { userId: user._id })
+      }
     }
   } catch (e) {
     logger.error('admin:seed_error', { error: e.message })
