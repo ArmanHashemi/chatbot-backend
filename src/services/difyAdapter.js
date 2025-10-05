@@ -2,6 +2,7 @@ import crypto from 'crypto'
 import { llmAssist, llmStreamAssist } from './llm.js'
 import { logger as baseLogger } from './logger.js'
 import { createOrGetConversation, listConversationMessages, saveMessage, saveAssistantMessage } from './chatStorage.js'
+import { createTrace, createSpan, createGeneration, finalizeTrace } from './langfuseIntegration.js'
 
 const logger = baseLogger.child({ service: 'difyAdapter' })
 
@@ -109,6 +110,18 @@ export function transformToDifyResponse(internalResponse, responseMode = 'blocki
 export async function handleDifyBlockingRequest(user, payload) {
   const log = baseLogger.child({ service: 'difyAdapter', mode: 'blocking', userId: String(user._id) })
   
+  // Create Langfuse trace
+  const trace = createTrace({
+    userId: user.email, // Use email as user ID
+    sessionId: payload.conversation_id || 'no-conversation',
+    query: payload.query,
+    metadata: {
+      response_mode: 'blocking',
+      user_id: String(user._id),
+      user_email: user.email
+    }
+  })
+  
   try {
     const { query, inputs = {}, conversation_id, response_mode } = payload
 
@@ -150,7 +163,36 @@ export async function handleDifyBlockingRequest(user, payload) {
       queryLen: query.length 
     })
 
+    // Log context fetching (if docs are provided)
+    if (inputs.fdoc || inputs.sdoc) {
+      createSpan(trace, {
+        name: 'fetch_context_via_primary_search',
+        input: { query },
+        output: { 
+          context: [
+            ...(inputs.fdoc ? [inputs.fdoc] : []),
+            ...(inputs.sdoc ? [inputs.sdoc] : [])
+          ] 
+        }
+      })
+    }
+
+    // Log prompt preparation
+    createSpan(trace, {
+      name: 'prepare_for_generation',
+      input: { 
+        user_query: query, 
+        history: history.map(h => h.content),
+        context: inputs.fdoc || null
+      },
+      output: { 
+        prompt_template: 'default_chat_template',
+        system_prompt: 'You are a helpful assistant'
+      }
+    })
+
     // Call LLM assist
+    const startTime = new Date()
     const assistResponse = await llmAssist({
       action: inputs.action || 1,
       history,
@@ -160,9 +202,28 @@ export async function handleDifyBlockingRequest(user, payload) {
       query: inputs.query || '',
       think: inputs.think || 0
     })
+    const endTime = new Date()
 
     const reply = assistResponse?.response || ''
     const docs = Array.isArray(assistResponse?.docs) ? assistResponse.docs : []
+
+    // Log generation
+    createGeneration(trace, {
+      model: 'gpt-4', // or get from config
+      startTime,
+      endTime,
+      input: query,
+      output: reply,
+      modelParameters: {
+        temperature: 0.7,
+        max_tokens: 1000
+      },
+      usage: {
+        input_tokens: Math.ceil(query.length / 4), // Approximate
+        output_tokens: Math.ceil(reply.length / 4), // Approximate
+        total_tokens: Math.ceil((query.length + reply.length) / 4)
+      }
+    })
 
     // Save assistant response
     const assistantMessage = await saveAssistantMessage({
@@ -182,6 +243,12 @@ export async function handleDifyBlockingRequest(user, payload) {
       conversationId,
       replyLen: reply.length,
       docsCount: docs.length 
+    })
+
+    // Finalize trace
+    finalizeTrace(trace, { 
+      response: reply,
+      docs_count: docs.length
     })
 
     // Return Dify-formatted response
@@ -215,6 +282,18 @@ export async function handleDifyBlockingRequest(user, payload) {
  */
 export async function* handleDifyStreamingRequest(user, payload) {
   const log = baseLogger.child({ service: 'difyAdapter', mode: 'streaming', userId: String(user._id) })
+  
+  // Create Langfuse trace for streaming
+  const trace = createTrace({
+    userId: user.email, // Use email as user ID
+    sessionId: payload.conversation_id || 'no-conversation',
+    query: payload.query,
+    metadata: {
+      response_mode: 'streaming',
+      user_id: String(user._id),
+      user_email: user.email
+    }
+  })
   
   try {
     const { query, inputs = {}, conversation_id } = payload
@@ -260,6 +339,34 @@ export async function* handleDifyStreamingRequest(user, payload) {
       queryLen: query.length,
       historyLen: history.length 
     })
+    
+    // Log context fetching (if docs are provided)
+    if (inputs.fdoc || inputs.sdoc) {
+      createSpan(trace, {
+        name: 'fetch_context_via_primary_search',
+        input: { query },
+        output: { 
+          context: [
+            ...(inputs.fdoc ? [inputs.fdoc] : []),
+            ...(inputs.sdoc ? [inputs.sdoc] : [])
+          ] 
+        }
+      })
+    }
+    
+    // Log prompt preparation
+    createSpan(trace, {
+      name: 'prepare_for_generation',
+      input: { 
+        user_query: query, 
+        history: history.map(h => h.content),
+        context: inputs.fdoc || null
+      },
+      output: { 
+        prompt_template: 'default_chat_template',
+        system_prompt: 'You are a helpful assistant'
+      }
+    })
 
     // Update conversation title if needed
     if (!conversation.title || conversation.title.trim() === '') {
@@ -281,6 +388,7 @@ export async function* handleDifyStreamingRequest(user, payload) {
     let fullAnswer = ''
     let totalTokens = 0
     let docs = []
+    const startTime = new Date()
 
     // Stream chunks to client
     for await (const chunk of streamGenerator) {
@@ -298,6 +406,26 @@ export async function* handleDifyStreamingRequest(user, payload) {
       } else if (chunk.type === 'finished') {
         fullAnswer = chunk.text
         totalTokens = chunk.totalTokens
+        const endTime = new Date()
+        
+        // Log generation
+        createGeneration(trace, {
+          model: 'gpt-4', // or get from config
+          startTime,
+          endTime,
+          input: query,
+          output: fullAnswer,
+          modelParameters: {
+            temperature: 0.7,
+            max_tokens: 1000,
+            streaming: true
+          },
+          usage: {
+            total_tokens: totalTokens,
+            input_tokens: Math.ceil(query.length / 4), // Approximate
+            output_tokens: Math.ceil(fullAnswer.length / 4) // Approximate
+          }
+        })
         
         // Save assistant message
         const assistantMessage = await saveAssistantMessage({
@@ -321,6 +449,13 @@ export async function* handleDifyStreamingRequest(user, payload) {
             }
           }
         }
+        
+        // Finalize Langfuse trace
+        finalizeTrace(trace, { 
+          response: fullAnswer,
+          total_tokens: totalTokens,
+          streaming: true
+        })
         
         log.info('stream:complete', { 
           conversationId,
