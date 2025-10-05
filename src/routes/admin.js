@@ -1,12 +1,15 @@
 import { Router } from 'express'
 import { authRequired, adminRequired } from '../middleware/auth.js'
 import User from '../models/User.js'
+import ApiKey from '../models/ApiKey.js'
 import Document from '../models/Document.js'
 import Conversation from '../models/Conversation.js'
 import Message from '../models/Message.js'
 import FAQ from '../models/FAQ.js'
+import { logger as baseLogger } from '../services/logger.js'
 
 const router = Router()
+const logger = baseLogger.child({ route: 'admin' })
 
 // Users
 router.get('/users', authRequired, adminRequired, async (_req, res, next) => {
@@ -14,6 +17,53 @@ router.get('/users', authRequired, adminRequired, async (_req, res, next) => {
     const users = await User.find({}, { passwordHash: 0 }).sort({ createdAt: -1 })
     res.json({ result: users })
   } catch (err) { next(err) }
+})
+
+// Create new user (Admin only)
+router.post('/users', authRequired, adminRequired, async (req, res, next) => {
+  try {
+    const { name, email, password, isAdmin = false } = req.body || {}
+    
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password are required' })
+    }
+    
+    const exists = await User.findOne({ email })
+    if (exists) {
+      return res.status(409).json({ error: 'Email already registered' })
+    }
+    
+    const passwordHash = await User.hashPassword(password)
+    const user = await User.create({ name, email, passwordHash, isAdmin })
+    
+    // Create default API key for new user
+    const apiKey = ApiKey.generateKey()
+    await ApiKey.create({
+      userId: user._id,
+      key: apiKey,
+      name: 'Default API Key',
+      isActive: true
+    })
+    
+    logger.info('admin:user_created', { 
+      adminId: req.user.id, 
+      newUserId: String(user._id), 
+      email 
+    })
+    
+    res.status(201).json({ 
+      result: { 
+        id: String(user._id), 
+        email: user.email, 
+        name: user.name, 
+        isAdmin: !!user.isAdmin,
+        apiKey // Return API key only once during creation
+      } 
+    })
+  } catch (err) { 
+    logger.error('admin:user_create_error', { error: err.message })
+    next(err) 
+  }
 })
 
 router.patch('/users/:id/admin', authRequired, adminRequired, async (req, res, next) => {
@@ -26,14 +76,144 @@ router.patch('/users/:id/admin', authRequired, adminRequired, async (req, res, n
   } catch (err) { next(err) }
 })
 
-// POST alias (some clients use POST from forms)
-router.post('/users/:id/admin', authRequired, adminRequired, async (req, res, next) => {
+// Delete user (Admin only)
+router.delete('/users/:id', authRequired, adminRequired, async (req, res, next) => {
   try {
     const { id } = req.params
-    const { isAdmin } = req.body || {}
-    const user = await User.findByIdAndUpdate(id, { isAdmin: !!isAdmin }, { new: true }).select('-passwordHash')
+    
+    // Prevent deleting self
+    if (id === req.user.id) {
+      return res.status(400).json({ error: 'Cannot delete your own account' })
+    }
+    
+    // Delete user's API keys
+    await ApiKey.deleteMany({ userId: id })
+    
+    // Delete user
+    const user = await User.findByIdAndDelete(id)
     if (!user) return res.status(404).json({ error: 'User not found' })
-    res.json({ result: user })
+    
+    logger.info('admin:user_deleted', { 
+      adminId: req.user.id, 
+      deletedUserId: id 
+    })
+    
+    res.json({ result: { id, deleted: true } })
+  } catch (err) { 
+    logger.error('admin:user_delete_error', { error: err.message })
+    next(err) 
+  }
+})
+
+// API Keys Management (Admin only)
+router.get('/users/:userId/api-keys', authRequired, adminRequired, async (req, res, next) => {
+  try {
+    const { userId } = req.params
+    const keys = await ApiKey.find({ userId }).select('-key')
+    res.json({ result: keys })
+  } catch (err) { next(err) }
+})
+
+router.post('/users/:userId/api-keys', authRequired, adminRequired, async (req, res, next) => {
+  try {
+    const { userId } = req.params
+    const { name = 'Admin Created Key', expiresIn = null } = req.body || {}
+    
+    // Verify user exists
+    const user = await User.findById(userId)
+    if (!user) return res.status(404).json({ error: 'User not found' })
+    
+    // Generate new key
+    const apiKey = ApiKey.generateKey()
+    
+    // Calculate expiration if provided (in days)
+    let expiresAt = null
+    if (expiresIn && Number(expiresIn) > 0) {
+      expiresAt = new Date()
+      expiresAt.setDate(expiresAt.getDate() + Number(expiresIn))
+    }
+    
+    // Create key
+    const keyDoc = await ApiKey.create({
+      userId,
+      key: apiKey,
+      name,
+      expiresAt,
+      isActive: true
+    })
+    
+    logger.info('admin:api_key_created', { 
+      adminId: req.user.id, 
+      userId, 
+      keyId: keyDoc._id 
+    })
+    
+    res.status(201).json({ 
+      result: { 
+        id: keyDoc._id,
+        key: apiKey, // Return only once
+        name,
+        expiresAt,
+        message: 'Save this key securely. It will not be shown again.'
+      } 
+    })
+  } catch (err) { 
+    logger.error('admin:api_key_create_error', { error: err.message })
+    next(err) 
+  }
+})
+
+router.delete('/api-keys/:keyId', authRequired, adminRequired, async (req, res, next) => {
+  try {
+    const { keyId } = req.params
+    
+    const key = await ApiKey.findByIdAndDelete(keyId)
+    if (!key) return res.status(404).json({ error: 'API key not found' })
+    
+    logger.info('admin:api_key_deleted', { 
+      adminId: req.user.id, 
+      keyId 
+    })
+    
+    res.json({ result: { id: keyId, deleted: true } })
+  } catch (err) { 
+    logger.error('admin:api_key_delete_error', { error: err.message })
+    next(err) 
+  }
+})
+
+router.patch('/api-keys/:keyId/toggle', authRequired, adminRequired, async (req, res, next) => {
+  try {
+    const { keyId } = req.params
+    
+    const key = await ApiKey.findById(keyId)
+    if (!key) return res.status(404).json({ error: 'API key not found' })
+    
+    key.isActive = !key.isActive
+    await key.save()
+    
+    logger.info('admin:api_key_toggled', { 
+      adminId: req.user.id, 
+      keyId,
+      isActive: key.isActive 
+    })
+    
+    res.json({ result: { id: keyId, isActive: key.isActive } })
+  } catch (err) { 
+    logger.error('admin:api_key_toggle_error', { error: err.message })
+    next(err) 
+  }
+})
+
+// Get all API keys (Admin only)
+router.get('/api-keys', authRequired, adminRequired, async (req, res, next) => {
+  try {
+    const keys = await ApiKey.find()
+      .populate('userId', 'email name')
+      .select('-key')
+      .sort({ createdAt: -1 })
+    
+    res.json({ result: keys })
   } catch (err) { next(err) }
 })
 

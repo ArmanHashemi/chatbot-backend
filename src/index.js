@@ -121,34 +121,92 @@ connectDB()
 
 async function ensureDefaultAdmin() {
   try {
-    const email = process.env.ADMIN_EMAIL || 'admin@example.com'
-    const password = process.env.ADMIN_PASSWORD || 'admin1234'
-    let user = await User.findOne({ email })
-    if (!user) {
-      const passwordHash = await User.hashPassword(password)
-      user = await User.create({ email, name: 'Admin', passwordHash, isAdmin: true })
-      logger.info('admin:seeded', { email })
-    } else if (!user.isAdmin) {
-      user.isAdmin = true
-      await user.save()
-      logger.info('admin:granted', { email })
+    // Create or update admin user
+    const adminEmail = process.env.ADMIN_EMAIL || 'admin@example.com'
+    const adminPassword = process.env.ADMIN_PASSWORD || 'admin1234'
+    let adminUser = await User.findOne({ email: adminEmail })
+    
+    if (!adminUser) {
+      const passwordHash = await User.hashPassword(adminPassword)
+      adminUser = await User.create({ 
+        email: adminEmail, 
+        name: 'Admin', 
+        passwordHash, 
+        isAdmin: true 
+      })
+      logger.info('admin:seeded', { email: adminEmail })
+    } else if (!adminUser.isAdmin) {
+      adminUser.isAdmin = true
+      await adminUser.save()
+      logger.info('admin:granted', { email: adminEmail })
     }
     
-    // Create default API key for test user if configured
-    if (process.env.DIFY_TEST_USER_ID && process.env.DIFY_TEST_API_KEY) {
-      const testApiKey = await ApiKey.findOne({ key: process.env.DIFY_TEST_API_KEY })
-      if (!testApiKey) {
-        await ApiKey.create({
-          userId: user._id,
-          key: process.env.DIFY_TEST_API_KEY,
-          name: 'Test API Key',
-          isActive: true
-        })
-        logger.info('test:api_key_created', { userId: user._id })
-      }
+    // Create test user if configured
+    const testEmail = process.env.TEST_USER_EMAIL || 'test@example.com'
+    const testPassword = process.env.TEST_USER_PASSWORD || 'test1234'
+    let testUser = await User.findOne({ email: testEmail })
+    
+    if (!testUser) {
+      const testPasswordHash = await User.hashPassword(testPassword)
+      testUser = await User.create({ 
+        email: testEmail, 
+        name: 'Test User', 
+        passwordHash: testPasswordHash, 
+        isAdmin: false 
+      })
+      logger.info('test:user_created', { email: testEmail })
     }
+    
+    // Create default test API key if configured
+    const testApiKeyValue = process.env.DIFY_TEST_API_KEY || 'app-test-key-change-me-for-production'
+    let testApiKey = await ApiKey.findOne({ key: testApiKeyValue })
+    
+    if (!testApiKey) {
+      testApiKey = await ApiKey.create({
+        userId: testUser._id,
+        key: testApiKeyValue,
+        name: 'Default Test API Key',
+        isActive: true
+      })
+      logger.info('test:api_key_created', { 
+        userId: testUser._id,
+        email: testEmail,
+        key: testApiKeyValue.slice(0, 20) + '...'
+      })
+    } else {
+      // Update existing key to ensure it's linked to test user
+      testApiKey.userId = testUser._id
+      testApiKey.isActive = true
+      await testApiKey.save()
+      logger.info('test:api_key_updated', { userId: testUser._id })
+    }
+    
+    // Log startup info
+    logger.info('startup:ready', {
+      adminEmail,
+      testEmail,
+      testApiKey: testApiKeyValue.slice(0, 20) + '...',
+      testUserId: String(testUser._id),
+      difyTestUserId: process.env.DIFY_TEST_USER_ID || 'test-user-id'
+    })
+    
+    // Print to console for easy access
+    console.log('\n' + '='.repeat(60))
+    console.log('🚀 SYSTEM READY - Test Credentials')
+    console.log('='.repeat(60))
+    console.log('Admin Login:')
+    console.log(`  Email: ${adminEmail}`)
+    console.log(`  Password: ${adminPassword}`)
+    console.log('\nTest API Access:')
+    console.log(`  API Key: ${testApiKeyValue}`)
+    console.log(`  User ID: ${process.env.DIFY_TEST_USER_ID || 'test-user-id'}`)
+    console.log(`  Test Email: ${testEmail}`)
+    console.log('\nAPI Endpoint:')
+    console.log(`  POST http://localhost:${PORT}/v1/chat-messages`)
+    console.log('='.repeat(60) + '\n')
+    
   } catch (e) {
-    logger.error('admin:seed_error', { error: e.message })
+    logger.error('startup:error', { error: e.message, stack: e.stack })
   }
 }
 

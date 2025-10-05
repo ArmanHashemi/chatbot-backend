@@ -4,24 +4,28 @@ import { signToken, authRequired } from '../middleware/auth.js'
 
 const router = Router()
 
-// POST /api/auth/register
+// POST /api/auth/register - DISABLED for security
+// Only admins can create new users through /api/admin/users
 router.post('/register', async (req, res, next) => {
-  try {
-    const { name, email, password } = req.body || {}
-    if (!email || !password) return res.status(400).json({ error: 'email and password are required' })
-
-    const exists = await User.findOne({ email })
-    if (exists) return res.status(409).json({ error: 'email already registered' })
-
-    const passwordHash = await User.hashPassword(password)
-    const user = await User.create({ name, email, passwordHash })
-
-    const token = signToken({ id: String(user._id) })
-    res.cookie('token', `Bearer ${token}`, { httpOnly: true, sameSite: 'lax' })
-    return res.json({ result: { id: String(user._id), email: user.email, name: user.name, token } })
-  } catch (err) {
-    return next(err)
-  }
+  // Public registration is disabled
+  return res.status(403).json({ 
+    error: 'Public registration is disabled. Please contact administrator.' 
+  })
+  
+  // Original code kept for reference:
+  // try {
+  //   const { name, email, password } = req.body || {}
+  //   if (!email || !password) return res.status(400).json({ error: 'email and password are required' })
+  //   const exists = await User.findOne({ email })
+  //   if (exists) return res.status(409).json({ error: 'email already registered' })
+  //   const passwordHash = await User.hashPassword(password)
+  //   const user = await User.create({ name, email, passwordHash })
+  //   const token = signToken({ id: String(user._id) })
+  //   res.cookie('token', `Bearer ${token}`, { httpOnly: true, sameSite: 'lax' })
+  //   return res.json({ result: { id: String(user._id), email: user.email, name: user.name, token } })
+  // } catch (err) {
+  //   return next(err)
+  // }
 })
 
 // POST /api/auth/login
